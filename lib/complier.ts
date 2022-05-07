@@ -119,5 +119,12 @@ export class Compiler {
     // 创建一次编译对象. 每次编译都会生成一个
     const compilation = this.newCompilation(params);
 
+    // make 回调函数。 在创建玩编译对象后执行
+    this.hooks.make.callAsync(compilation, err => {
+      if (err) return callback(err);
+      // make 之后的
+      this.hooks.finishMake.callAsync
+    })
+
   }
 }
