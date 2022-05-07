@@ -1,5 +1,6 @@
 import { WebpackOptions } from '../declarations/WebpackOptions'
 import { Compiler } from './complier'
+import {NodeEnvironmentPlugin} from './node/NodeEnvionmentPlugin'
 
 const webpack = (options: WebpackOptions) => {
   const create = () => {
@@ -18,7 +19,10 @@ const webpack = (options: WebpackOptions) => {
 
     // 1. 创建编译器
     compiler = createCompiler(webpackOptions);
-    // 2.
+    // 2. 环境插件
+    new NodeEnvironmentPlugin({
+      infrastructureLogging: options.infrastructureLogging
+    }).apply(compiler)
   }
 }
 
