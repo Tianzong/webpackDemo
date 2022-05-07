@@ -418,5 +418,89 @@ export class Compilation {
     this.assets = {};
   }
 
-  // 各种类型的hooks
+  /**
+   * @param {string} context context path for entry
+   * @param {Dependency} entry entry dependency that should be followed
+   * @param {string | EntryOptions} optionsOrName options or deprecated name of entry
+   * @param {ModuleCallback} callback callback function
+   * @returns {void} returns
+   */
+  addEntry(context, entry, optionsOrName, callback) {
+    // TODO webpack 6 remove
+    const options =
+      typeof optionsOrName === "object"
+        ? optionsOrName
+        : { name: optionsOrName };
+
+    this._addEntryItem(context, entry, "dependencies", options, callback);
+  }
+
+  /**
+   * @param {string} context context path for entry
+   * @param {Dependency} entry entry dependency that should be followed
+   * @param {"dependencies" | "includeDependencies"} target type of entry
+   * @param {EntryOptions} options options
+   * @param {ModuleCallback} callback callback function
+   * @returns {void} returns
+   */
+  _addEntryItem(context, entry, target, options, callback) {
+    const { name } = options;
+    let entryData =
+      name !== undefined ? this.entries.get(name) : this.globalEntry;
+    if (entryData === undefined) {
+      entryData = {
+        dependencies: [],
+        includeDependencies: [],
+        options: {
+          name: undefined,
+          ...options
+        }
+      };
+      entryData[target].push(entry);
+      this.entries.set(name, entryData);
+    } else {
+      entryData[target].push(entry);
+      for (const key of Object.keys(options)) {
+        if (options[key] === undefined) continue;
+        if (entryData.options[key] === options[key]) continue;
+        if (
+          Array.isArray(entryData.options[key]) &&
+          Array.isArray(options[key]) &&
+          arrayEquals(entryData.options[key], options[key])
+        ) {
+          continue;
+        }
+        if (entryData.options[key] === undefined) {
+          entryData.options[key] = options[key];
+        } else {
+          return callback(
+            new WebpackError(
+              `Conflicting entry option ${key} = ${entryData.options[key]} vs ${options[key]}`
+            )
+          );
+        }
+      }
+    }
+
+    this.hooks.addEntry.call(entry, options);
+
+    this.addModuleTree(
+      {
+        context,
+        dependency: entry,
+        contextInfo: entryData.options.layer
+          ? { issuerLayer: entryData.options.layer }
+          : undefined
+      },
+      (err, module) => {
+        if (err) {
+          this.hooks.failedEntry.call(entry, options, err);
+          return callback(err);
+        }
+        this.hooks.succeedEntry.call(entry, options, module);
+        return callback(null, module);
+      }
+    );
+  }
+
 }

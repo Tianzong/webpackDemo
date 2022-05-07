@@ -9,9 +9,16 @@ export class Compiler {
    */
   constructor(context: string, options: WebpackOptions = {}) {
     // 一大堆钩子函数
+    //绑定事件到webapck事件流,
+    //     hook1.tap('标识符', (arg1, arg2, arg3) => console.log(arg1, arg2, arg3)) //1,2,3
+    //执行绑定的事件
+    //     hook1.call(1,2,3)
+    // const hook1 = new SyncHook(["arg1", "arg2", "arg3"]);
+
+    // 生命周期钩子
     this.hooks = Object.freeze({
       /** @type {SyncHook<[]>} */
-      initialize: new SyncHook([]),
+      initialize: new SyncHook([]), // 当编译器对象被初始化时调用
 
       /** @type {SyncBailHook<[Compilation], boolean>} */
       shouldEmit: new SyncBailHook(["compilation"]),
@@ -126,5 +133,6 @@ export class Compiler {
       this.hooks.finishMake.callAsync
     })
 
+    //
   }
 }
