@@ -1,4 +1,5 @@
 import {WebpackOptions} from '../declarations/WebpackOptions'
+import {Compilation} from './Compilation'
 
 export class Compiler {
   private hooks: Readonly<{ watchRun: AsyncSeriesHook; afterDone: SyncHook; run: AsyncSeriesHook; normalModuleFactory: SyncHook; assetEmitted: AsyncSeriesHook; beforeCompile: AsyncSeriesHook; compile: SyncHook; watchClose: SyncHook; entryOption: SyncBailHook; afterResolvers: SyncHook; make: AsyncParallelHook; afterEnvironment: SyncHook; additionalPass: AsyncSeriesHook; beforeRun: AsyncSeriesHook; failed: SyncHook; afterCompile: AsyncSeriesHook; done: AsyncSeriesHook; shouldEmit: SyncBailHook; environment: SyncHook; thisCompilation: SyncHook; compilation: SyncHook; afterEmit: AsyncSeriesHook; emitRecords: AsyncSeriesHook; readRecords: AsyncSeriesHook; invalid: SyncHook; initialize: SyncHook; emit: AsyncSeriesHook; contextModuleFactory: SyncHook; infrastructureLog: SyncBailHook; finishMake: AsyncSeriesHook; shutdown: AsyncSeriesHook; afterPlugins: SyncHook }>
@@ -83,5 +84,40 @@ export class Compiler {
       /** @type {SyncBailHook<[string, Entry], boolean>} */
       entryOption: new SyncBailHook(["context", "entry"])
     });
+  }
+
+  // 一些奇怪的参数处理，先不看
+  newCompilationParams() {
+    const params = {
+      // normalModuleFactory: this.createNormalModuleFactory(),
+      // contextModuleFactory: this.createContextModuleFactory()
+    };
+    return params;
+  }
+
+  createCompilation(params) {
+    this._cleanupLastCompilation();
+    return (this._lastCompilation = new Compilation(this, params));
+  }
+
+  newCompilation(params) {
+    const compilation = this.createCompilation(params);
+    compilation.name = this.name;
+    compilation.records = this.records;
+    this.hooks.thisCompilation.call(compilation, params);
+    this.hooks.compilation.call(compilation, params);
+    return compilation;
+  }
+
+  compile(callback) {
+    // ？
+    const params = this.newCompilationParams();
+
+    // 编译前的钩子函数
+    this.hooks.compile.call(params);
+
+    // 创建一次编译对象. 每次编译都会生成一个
+    const compilation = this.newCompilation(params);
+
   }
 }
