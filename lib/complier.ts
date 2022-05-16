@@ -1,8 +1,10 @@
 import {WebpackOptions} from '../declarations/WebpackOptions'
 import {Compilation} from './Compilation'
+import asyncLib from 'neo-async'
 
 export class Compiler {
   private hooks: Readonly<{ watchRun: AsyncSeriesHook; afterDone: SyncHook; run: AsyncSeriesHook; normalModuleFactory: SyncHook; assetEmitted: AsyncSeriesHook; beforeCompile: AsyncSeriesHook; compile: SyncHook; watchClose: SyncHook; entryOption: SyncBailHook; afterResolvers: SyncHook; make: AsyncParallelHook; afterEnvironment: SyncHook; additionalPass: AsyncSeriesHook; beforeRun: AsyncSeriesHook; failed: SyncHook; afterCompile: AsyncSeriesHook; done: AsyncSeriesHook; shouldEmit: SyncBailHook; environment: SyncHook; thisCompilation: SyncHook; compilation: SyncHook; afterEmit: AsyncSeriesHook; emitRecords: AsyncSeriesHook; readRecords: AsyncSeriesHook; invalid: SyncHook; initialize: SyncHook; emit: AsyncSeriesHook; contextModuleFactory: SyncHook; infrastructureLog: SyncBailHook; finishMake: AsyncSeriesHook; shutdown: AsyncSeriesHook; afterPlugins: SyncHook }>
+  private running: any
   /**
    * @param {string} context the compilation path
    * @param {WebpackOptions} options options
@@ -126,13 +128,152 @@ export class Compiler {
     // 创建一次编译对象. 每次编译都会生成一个
     const compilation = this.newCompilation(params);
 
-    // make 回调函数。 在创建玩编译对象后执行
+
+    // make生命周期。将编译对象传入。此时可以拿到编译对象
     this.hooks.make.callAsync(compilation, err => {
       if (err) return callback(err);
-      // make 之后的
-      this.hooks.finishMake.callAsync
-    })
 
-    //
+      this.hooks.finishMake.callAsync(compilation, err => {
+        if (err) return callback(err);
+
+        process.nextTick(() => {
+          compilation.finish(err => {
+            if (err) return callback(err);
+
+            compilation.seal(err => {
+              if (err) return callback(err);
+
+              this.hooks.afterCompile.callAsync(compilation, err => {
+                if (err) return callback(err);
+
+                return callback(null, compilation);
+              });
+            });
+          });
+        });
+      });
+    });
   }
+
+  run(callback) {
+    if (this.running) {
+      //
+    }
+
+    this.running = true;
+
+    // 编译结束后得回调函数
+    const finalCallback = (err, stats = undefined) => {
+      this.running = false;
+      if (err) {
+        // 出错了 调用错误钩子
+        this.hooks.failed.call(err);
+      }
+      if (callback !== undefined) callback(err, stats);
+      // 执行结束后得钩子
+      this.hooks.afterDone.call(stats);
+    };
+
+    // 编译后得回调函数.
+    // onCompiled是在Compiler.run中定义的，传给Compiler.compile的回调函数。在compile过程后调用，主要用于输出构建资源。
+    const onCompiled = (err, compilation) => {
+      if (err) return finalCallback(err, undefined);
+
+      // 判断是否输出资源的钩子函数
+      if (this.hooks.shouldEmit.call(compilation) === false) {
+        compilation.startTime = startTime;
+        compilation.endTime = Date.now();
+        const stats = new Stats(compilation);
+        this.hooks.done.callAsync(stats, err => {
+          if (err) return finalCallback(err, undefined);
+          return finalCallback(null, stats);
+        });
+        return;
+      }
+
+      // todo 输出资源
+      process.nextTick(() => {
+      });
+    };
+
+    // 执行before钩子函数
+    const run = () => {
+      this.hooks.beforeRun.callAsync(this, err => {
+        if (err) return finalCallback(err);
+
+        this.hooks.run.callAsync(this, err => {
+          if (err) return finalCallback(err);
+
+          // readRecords用于读取之前的records的方法，关于records，
+          this.readRecords(err => {
+            if (err) return finalCallback(err);
+            // 核心
+            this.compile(onCompiled);
+          });
+        });
+      });
+    };
+
+
+    run();
+  }
+
+  /**
+   * @param {Callback<void>} callback signals when the call finishes
+   * @returns {void}
+   */
+  readRecords(callback) {
+    if (this.hooks.readRecords.isUsed()) {
+      // recordsInputPath是webpack配置中指定的读取上一组records的文件路径
+      if (this.recordsInputPath) {
+        asyncLib.parallel([
+          cb => this.hooks.readRecords.callAsync(cb),
+          this._readRecords.bind(this)
+        ]);
+      } else {
+        this.records = {};
+        this.hooks.readRecords.callAsync(callback);
+      }
+    } else {
+      if (this.recordsInputPath) {
+        this._readRecords(callback);
+      } else {
+        this.records = {};
+        callback();
+      }
+    }
+  }
+
+  /**
+   * @param {Callback<void>} callback signals when the call finishes
+   * @returns {void}
+   */
+  // readRecords用于读取之前的records的方法，关于records，
+  // 文档的描述是pieces of data used to store module identifiers across multiple builds
+  // （一些数据片段，用于储存多次构建过程中的module的标识）可参考recordsPath。
+  _readRecords(callback) {
+    if (!this.recordsInputPath) {
+      this.records = {};
+      return callback();
+    }
+    this.inputFileSystem.stat(this.recordsInputPath, err => {
+      // It doesn't exist
+      // We can ignore this.
+      if (err) return callback();
+
+      this.inputFileSystem.readFile(this.recordsInputPath, (err, content) => {
+        if (err) return callback(err);
+
+        try {
+          this.records = parseJson(content.toString("utf-8"));
+        } catch (e) {
+          e.message = "Cannot parse records: " + e.message;
+          return callback(e);
+        }
+
+        return callback();
+      });
+    });
+  }
+
 }

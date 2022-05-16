@@ -19,7 +19,8 @@ const webpack = (options: WebpackOptions) => {
 
     // 1. 创建编译器
     compiler = createCompiler(webpackOptions);
-    // 2.
+    // 2. 执行 run
+    compiler.run()
   }
 }
 
