@@ -1,6 +1,8 @@
 import {WebpackOptions} from '../declarations/WebpackOptions'
 import {Compilation} from './Compilation'
 import asyncLib from 'neo-async'
+import {SizeOnlySource} from 'webpack-sources'
+
 
 export class Compiler {
   private hooks: Readonly<{ watchRun: AsyncSeriesHook; afterDone: SyncHook; run: AsyncSeriesHook; normalModuleFactory: SyncHook; assetEmitted: AsyncSeriesHook; beforeCompile: AsyncSeriesHook; compile: SyncHook; watchClose: SyncHook; entryOption: SyncBailHook; afterResolvers: SyncHook; make: AsyncParallelHook; afterEnvironment: SyncHook; additionalPass: AsyncSeriesHook; beforeRun: AsyncSeriesHook; failed: SyncHook; afterCompile: AsyncSeriesHook; done: AsyncSeriesHook; shouldEmit: SyncBailHook; environment: SyncHook; thisCompilation: SyncHook; compilation: SyncHook; afterEmit: AsyncSeriesHook; emitRecords: AsyncSeriesHook; readRecords: AsyncSeriesHook; invalid: SyncHook; initialize: SyncHook; emit: AsyncSeriesHook; contextModuleFactory: SyncHook; infrastructureLog: SyncBailHook; finishMake: AsyncSeriesHook; shutdown: AsyncSeriesHook; afterPlugins: SyncHook }>
@@ -193,6 +195,51 @@ export class Compiler {
 
       // todo 输出资源
       process.nextTick(() => {
+        this.emitAssets(compilation, err => {
+          logger.timeEnd("emitAssets");
+          if (err) return finalCallback(err);
+
+          if (compilation.hooks.needAdditionalPass.call()) {
+            compilation.needAdditionalPass = true;
+
+            compilation.startTime = startTime;
+            compilation.endTime = Date.now();
+            logger.time("done hook");
+            const stats = new Stats(compilation);
+            this.hooks.done.callAsync(stats, err => {
+              logger.timeEnd("done hook");
+              if (err) return finalCallback(err);
+
+              this.hooks.additionalPass.callAsync(err => {
+                if (err) return finalCallback(err);
+                this.compile(onCompiled);
+              });
+            });
+            return;
+          }
+
+          logger.time("emitRecords");
+          this.emitRecords(err => {
+            logger.timeEnd("emitRecords");
+            if (err) return finalCallback(err);
+
+            compilation.startTime = startTime;
+            compilation.endTime = Date.now();
+            logger.time("done hook");
+            const stats = new Stats(compilation);
+            this.hooks.done.callAsync(stats, err => {
+              logger.timeEnd("done hook");
+              if (err) return finalCallback(err);
+              this.cache.storeBuildDependencies(
+                compilation.buildDependencies,
+                err => {
+                  if (err) return finalCallback(err);
+                  return finalCallback(null, stats);
+                }
+              );
+            });
+          });
+        });
       });
     };
 
@@ -275,5 +322,14 @@ export class Compiler {
         return callback();
       });
     });
+  }
+
+  /**
+   * @param {Compilation} compilation the compilation
+   * @param {Callback<void>} callback signals when the assets are emitted
+   * @returns {void}
+   */
+  // Todo: 暂时省略
+  emitAssets(compilation, callback) {
   }
 }

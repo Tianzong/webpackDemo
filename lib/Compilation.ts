@@ -1,4 +1,5 @@
 import util from 'util'
+import { AsyncQueue } from './AsyncQueue'
 // 一些发布订阅者钩子函数
 // https://juejin.cn/post/7040982789650382855
 const {
@@ -16,6 +17,7 @@ export class Compilation {
     afterRuntimeRequirements: any; chunkIds: any; shouldRecord: any; beforeRuntimeRequirements: any; runtimeRequirementInModule: any; beforeChunks: any; optimizeChunkModules: any; afterCodeGeneration: any; additionalModuleRuntimeRequirements: any; succeedModule: any; optimize: any; beforeModuleIds: any; record: any; statsPrinter: any; afterOptimizeModuleIds: any; additionalTreeRuntimeRequirements: any; needAdditionalPass: any; childCompiler: any; optimizeCodeGeneration: any; beforeModuleHash: any; processWarnings: any; optimizeModuleIds: any; runtimeRequirementInChunk: any; afterModuleHash: any; executeModule: any; afterChunks: any; additionalChunkRuntimeRequirements: any; afterHash: any; beforeChunkIds: any; addEntry: any; recordChunks: any; buildModule: any; afterOptimizeChunkModules: any; recordHash: any; optimizeTree: any; afterOptimizeTree: any; beforeCodeGeneration: any; statsPreset: any; optimizeChunkIds: any; shouldGenerateChunkAssets: any; beforeModuleAssets: any; readonly normalModuleLoader: any; additionalAssets: any; moduleAsset: any; log: any; afterSeal: any; failedEntry: any; seal: any; reviveModules: any; beforeHash: any; moduleIds: any; succeedEntry: any; optimizeModules: any; beforeChunkAssets: any; afterOptimizeChunkAssets: any; renderManifest: any; needAdditionalSeal: any; processAssets: any; processAdditionalAssets: any; statsNormalize: any; afterOptimizeAssets: any; assetPath: any; finishRebuildingModule: any; rebuildModule: any; afterProcessAssets: any; afterOptimizeChunkIds: any; prepareModuleExecution: any; stillValidModule: any; additionalChunkAssets: any; statsFactory: any; afterOptimizeChunks: any; optimizeChunkAssets: any; dependencyReferencedExports: any; chunkAsset: any; optimizeChunks: any; runtimeModule: any; optimizeDependencies: any; failedModule: any; fullHash: any; contentHash: any; runtimeRequirementInTree: any; afterOptimizeDependencies: any; processErrors: any; afterOptimizeModules: any; optimizeAssets: any; finishModules: any; unseal: any; reviveChunks: any; chunkHash: any; recordModules: any
   }>
   private assets: {}
+  private addModuleQueue: AsyncQueue
   constructor() {
     // 1. ?
     // this._backCompat = compiler._backCompat;
@@ -144,6 +146,22 @@ export class Compilation {
             };
         }
       }
+    });
+
+    // 添加一个 创建模块的任务 到异步队列
+    /** @type {AsyncQueue<FactorizeModuleOptions, string, Module | ModuleFactoryResult>} */
+    this.factorizeQueue = new AsyncQueue({
+      name: "factorize",
+      parent: this.addModuleQueue,
+      processor: this._factorizeModule.bind(this)
+    });
+
+    /** @type {AsyncQueue<Module, string, Module>} */
+    this.addModuleQueue = new AsyncQueue({
+      name: "addModule",
+      parent: this.processDependenciesQueue,
+      getKey: module => module.identifier(),
+      processor: this._addModule.bind(this)
     });
 
     // 各种类型的hooks
@@ -413,9 +431,51 @@ export class Compilation {
         return getNormalModuleLoader();
       }
     });
-
+    
     /** @type {CompilationAssets} */
     this.assets = {};
+  }
+
+  /**
+   * @param {FactorizeModuleOptions} options options object
+   * @param {ModuleOrFactoryResultCallback} callback callback
+   * @returns {void}
+   */
+  _factorizeModule(
+    {
+      currentProfile,
+      factory,
+      dependencies,
+      originModule,
+      factoryResult,
+      contextInfo,
+      context
+    },
+    callback
+  ) {
+    // todo: 调用 该文件类型的 模块工厂函数函数创建
+    // factory.create()
+  }
+
+  /**
+   * 添加模块
+   * @param {Module} module module to be added that was created
+   * @param {ModuleCallback} callback returns the module in the compilation,
+   * it could be the passed one (if new), or an already existing in the compilation
+   * @returns {void}
+   */
+  addModule(module, callback) {
+    this.addModuleQueue.add(module, callback);
+  }
+
+  /**
+   * @param {Module} module module to be added that was created
+   * @param {ModuleCallback} callback returns the module in the compilation,
+   * it could be the passed one (if new), or an already existing in the compilation
+   * @returns {void}
+   */
+  _addModule(module, callback) {
+
   }
 
   /**
@@ -443,10 +503,14 @@ export class Compilation {
    * @param {ModuleCallback} callback callback function
    * @returns {void} returns
    */
+  // Module：资源在 webpack 内部的映射对象，包含了资源的路径、上下文、依赖、内容等信息
+  // Dependency ：在模块中引用其它模块，例如 import "a.js" 语句，webpack 会先将引用关系表述为 Dependency 子类并关联 module 对象，等到当前 module 内容都解析完毕之后，启动下次循环开始将 Dependency 对象转换为适当的 Module 子类。
+  // Chunk ：用于组织输出结构的对象，webpack 分析完所有模块资源的内容，构建出完整的 Dependency Graph 之后，会根据用户配置及 Dependency Graph 内容构建出一个或多个 chunk 实例，每个 chunk 与最终输出的文件大致上是一一对应的。
   _addEntryItem(context, entry, target, options, callback) {
     const { name } = options;
     let entryData =
       name !== undefined ? this.entries.get(name) : this.globalEntry;
+    // 获取每个entry对应的dependencies, 添加依赖
     if (entryData === undefined) {
       entryData = {
         dependencies: [],
@@ -482,8 +546,10 @@ export class Compilation {
       }
     }
 
+    // 钩子
     this.hooks.addEntry.call(entry, options);
 
+    // 构建依赖树
     this.addModuleTree(
       {
         context,
@@ -503,4 +569,199 @@ export class Compilation {
     );
   }
 
+  /**
+   * // 构建依赖树
+   * @param {Object} options options
+   * @param {string} options.context context string path
+   * @param {Dependency} options.dependency dependency used to create Module chain
+   * @param {Partial<ModuleFactoryCreateDataContextInfo>=} options.contextInfo additional context info for the root module
+   * @param {ModuleCallback} callback callback for when module chain is complete
+   * @returns {void} will throw if dependency instance is not a valid Dependency
+   */
+  addModuleTree({ context, dependency, contextInfo }, callback) {
+    if (
+      typeof dependency !== "object" ||
+      dependency === null ||
+      !dependency.constructor
+    ) {
+      return callback(
+        new WebpackError("Parameter 'dependency' must be a Dependency")
+      );
+    }
+    const Dep = /** @type {DepConstructor} */ (dependency.constructor);
+    // Todo: 奇怪的 module 工厂函数
+    const moduleFactory = this.dependencyFactories.get(Dep);
+    if (!moduleFactory) {
+      return callback(
+        new WebpackError(
+          `No dependency factory available for this dependency type: ${dependency.constructor.name}`
+        )
+      );
+    }
+
+    // 调用 handleModuleCreate ，根据文件类型构建 module 子类
+    this.handleModuleCreation(
+      {
+        factory: moduleFactory,
+        dependencies: [dependency],
+        originModule: null,
+        contextInfo,
+        context
+      },
+      (err, result) => {
+        // Todo: 回调
+      }
+    );
+  }
+
+  /**
+   * @param {HandleModuleCreationOptions} options options object
+   * @param {ModuleCallback} callback callback
+   * @returns {void}
+   */
+  handleModuleCreation(
+    {
+      factory,
+      dependencies,
+      originModule,
+      contextInfo,
+      context,
+      recursive = true,
+      connectOrigin = recursive
+    },
+    callback
+  ) {
+    const moduleGraph = this.moduleGraph;
+
+    const currentProfile = this.profile ? new ModuleProfile() : undefined;
+
+    this.factorizeModule(
+      {
+        currentProfile,
+        factory,
+        dependencies,
+        factoryResult: true,
+        originModule,
+        contextInfo,
+        context
+      },
+      (err, factoryResult) => {
+        const applyFactoryResultDependencies = () => {
+          const { fileDependencies, contextDependencies, missingDependencies } =
+            factoryResult;
+          if (fileDependencies) {
+            this.fileDependencies.addAll(fileDependencies);
+          }
+          if (contextDependencies) {
+            this.contextDependencies.addAll(contextDependencies);
+          }
+          if (missingDependencies) {
+            this.missingDependencies.addAll(missingDependencies);
+          }
+        };
+        if (err) {
+          if (factoryResult) applyFactoryResultDependencies();
+          if (dependencies.every(d => d.optional)) {
+            this.warnings.push(err);
+            return callback();
+          } else {
+            this.errors.push(err);
+            return callback(err);
+          }
+        }
+
+        const newModule = factoryResult.module;
+
+        if (!newModule) {
+          applyFactoryResultDependencies();
+          return callback();
+        }
+
+        if (currentProfile !== undefined) {
+          moduleGraph.setProfile(newModule, currentProfile);
+        }
+
+        this.addModule(newModule, (err, module) => {
+          if (err) {
+            applyFactoryResultDependencies();
+            if (!err.module) {
+              err.module = module;
+            }
+            this.errors.push(err);
+
+            return callback(err);
+          }
+
+          if (
+            this._unsafeCache &&
+            factoryResult.cacheable !== false &&
+            /** @type {any} */ (module).restoreFromUnsafeCache &&
+            this._unsafeCachePredicate(module)
+          ) {
+            const unsafeCacheableModule =
+              /** @type {Module & { restoreFromUnsafeCache: Function }} */ (
+              module
+            );
+            for (let i = 0; i < dependencies.length; i++) {
+              const dependency = dependencies[i];
+              moduleGraph.setResolvedModule(
+                connectOrigin ? originModule : null,
+                dependency,
+                unsafeCacheableModule
+              );
+              unsafeCacheDependencies.set(dependency, unsafeCacheableModule);
+            }
+            if (!unsafeCacheData.has(unsafeCacheableModule)) {
+              unsafeCacheData.set(
+                unsafeCacheableModule,
+                unsafeCacheableModule.getUnsafeCacheData()
+              );
+            }
+          } else {
+            applyFactoryResultDependencies();
+            for (let i = 0; i < dependencies.length; i++) {
+              const dependency = dependencies[i];
+              moduleGraph.setResolvedModule(
+                connectOrigin ? originModule : null,
+                dependency,
+                module
+              );
+            }
+          }
+
+          moduleGraph.setIssuerIfUnset(
+            module,
+            originModule !== undefined ? originModule : null
+          );
+          if (module !== newModule) {
+            if (currentProfile !== undefined) {
+              const otherProfile = moduleGraph.getProfile(module);
+              if (otherProfile !== undefined) {
+                currentProfile.mergeInto(otherProfile);
+              } else {
+                moduleGraph.setProfile(module, currentProfile);
+              }
+            }
+          }
+
+          this._handleModuleBuildAndDependencies(
+            originModule,
+            module,
+            recursive,
+            callback
+          );
+        });
+      }
+    );
+  }
 }
+
+// Workaround for typescript as it doesn't support function overloading in jsdoc within a class
+Compilation.prototype.factorizeModule = /** @type {{
+	(options: FactorizeModuleOptions & { factoryResult?: false }, callback: ModuleCallback): void;
+	(options: FactorizeModuleOptions & { factoryResult: true }, callback: ModuleFactoryResultCallback): void;
+}} */ (
+  function (options, callback) {
+    this.factorizeQueue.add(options, callback);
+  }
+);
